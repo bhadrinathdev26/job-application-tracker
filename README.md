@@ -13,8 +13,8 @@ A modern, production-ready, full stack **Job Application Tracker** built to help
 
 ## 🌟 Live Demo & Preview
 
-- **Live Application:** [https://career-track-demo.vercel.app](https://career-track-demo.vercel.app) *(Replace with your deployed URL)*
-- **API Health Check:** `https://career-track-api.onrender.com/api/health/`
+- **Live Application:** [https://job-application-tracker-nine-flax.vercel.app](https://job-application-tracker-nine-flax.vercel.app)
+- **API Health Check:** [https://job-application-tracker-266g.onrender.com/api/health/](https://job-application-tracker-266g.onrender.com/api/health/)
 
 *(Screenshots can be added here)*
 ```text
