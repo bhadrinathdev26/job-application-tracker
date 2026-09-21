@@ -171,6 +171,9 @@ SIMPLE_JWT = {
 }
 
 # CORS Configuration
-cors_origins_raw = os.getenv('CORS_ALLOWED_ORIGINS', 'http://localhost:5173,http://127.0.0.1:5173')
-CORS_ALLOWED_ORIGINS = [origin.strip() for origin in cors_origins_raw.split(',') if origin.strip()]
+cors_raw = os.getenv('CORS_ALLOWED_ORIGINS', 'http://localhost:5173,http://127.0.0.1:5173')
+if any(w in cors_raw for w in ['*', 'all']) or os.getenv('CORS_ALLOW_ALL_ORIGINS', '').lower() in ('true', '1'):
+    CORS_ALLOW_ALL_ORIGINS = True
+else:
+    CORS_ALLOWED_ORIGINS = [origin.strip() for origin in cors_raw.split(',') if origin.strip()]
 CORS_ALLOW_CREDENTIALS = True
