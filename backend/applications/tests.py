@@ -197,3 +197,77 @@ class ApplicationAPITests(TestCase):
         self.assertEqual(len(page2_data["results"]), 5)
         self.assertIsNone(page2_data["next"])
         self.assertIsNotNone(page2_data["previous"])
+
+    def test_stats_calculation(self):
+        """Should correctly calculate total apps, status counts, and response rate."""
+        # 1 wishlist, 2 applied, 1 interview, 1 offer, 1 rejected
+        Application.objects.create(user=self.user_a, company="C1", role="R1", status="wishlist")
+        Application.objects.create(user=self.user_a, company="C2", role="R2", status="applied")
+        Application.objects.create(user=self.user_a, company="C3", role="R3", status="applied")
+        Application.objects.create(user=self.user_a, company="C4", role="R4", status="interview")
+        Application.objects.create(user=self.user_a, company="C5", role="R5", status="offer")
+        Application.objects.create(user=self.user_a, company="C6", role="R6", status="rejected")
+
+        # User B app should be isolated and not affect User A stats
+        Application.objects.create(user=self.user_b, company="C7", role="R7", status="offer")
+
+        stats_url = reverse('applications:application-stats')
+        response = self.client.get(stats_url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        data = response.json()
+
+        self.assertEqual(data["total_applications"], 6)
+        self.assertEqual(data["status_counts"]["wishlist"], 1)
+        self.assertEqual(data["status_counts"]["applied"], 2)
+        self.assertEqual(data["status_counts"]["interview"], 1)
+        self.assertEqual(data["status_counts"]["offer"], 1)
+        self.assertEqual(data["status_counts"]["rejected"], 1)
+
+        # 2 positive (interview + offer) out of 5 non-wishlist applied = 40.0%
+        self.assertEqual(data["response_rate_percent"], 40.0)
+        self.assertEqual(data["positive_responses"], 2)
+        self.assertEqual(data["active_applications"], 4)  # exclude offer and rejected (1+2+1=4)
+        self.assertIn("weekly_trend", data)
+        self.assertEqual(len(data["weekly_trend"]), 8)
+
+    def test_follow_ups_endpoint(self):
+        """Should only return active applications where follow_up_date <= today."""
+        from django.utils import timezone
+        from datetime import timedelta
+        today = timezone.now().date()
+
+        # Due in past (applied) -> YES
+        app_overdue = Application.objects.create(
+            user=self.user_a, company="Past Due Co", role="Dev", status="applied",
+            follow_up_date=today - timedelta(days=2)
+        )
+        # Due today (interview) -> YES
+        app_today = Application.objects.create(
+            user=self.user_a, company="Due Today Co", role="Dev", status="interview",
+            follow_up_date=today
+        )
+        # Due in future -> NO
+        Application.objects.create(
+            user=self.user_a, company="Future Co", role="Dev", status="applied",
+            follow_up_date=today + timedelta(days=5)
+        )
+        # Due in past but already rejected -> NO
+        Application.objects.create(
+            user=self.user_a, company="Rejected Co", role="Dev", status="rejected",
+            follow_up_date=today - timedelta(days=1)
+        )
+        # Due in past but belongs to User B -> NO
+        Application.objects.create(
+            user=self.user_b, company="User B Overdue", role="Dev", status="applied",
+            follow_up_date=today - timedelta(days=1)
+        )
+
+        follow_ups_url = reverse('applications:application-follow-ups')
+        response = self.client.get(follow_ups_url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        data = response.json()
+
+        # Should contain exactly the 2 active due applications for User A
+        self.assertEqual(len(data), 2)
+        companies = [item["company"] for item in data]
+        self.assertEqual(companies, ["Past Due Co", "Due Today Co"])

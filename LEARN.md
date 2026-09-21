@@ -232,3 +232,61 @@ Updates DB & returns HTTP 200
 
 #### Q5: What are database indexes and why did we add composite indexes on `(user, status)`?
 > **Answer:** An index is a data structure (typically a B-Tree) that allows the database engine to locate records without scanning every row in a table. Because our application constantly queries `WHERE user_id = ? AND status = ?` to populate the Kanban board columns, a composite index on `(user, status)` lets MySQL jump directly to the user's stage-specific applications in $O(\log n)$ time.
+
+---
+
+## Phase 4: Stats & Follow-Up Reminders Endpoints
+
+### 1. What We Built and Why
+
+In Phase 4, we added analytics intelligence and reminder capabilities to the backend:
+1. **Aggregated Stats Endpoint (`GET /api/applications/stats/`)**:
+   - Computes overall metrics without transferring thousands of individual records to the client.
+   - **`values('status').annotate(count=Count('id'))`**: Leverages MySQL's native `GROUP BY` to aggregate status counts in a single efficient SQL query.
+   - **Response Rate Formula:** `(interviews + offers) / (total applied excluding wishlist) * 100`. Tells the candidate the exact conversion efficiency of their applications.
+   - **8-Week Application Velocity:** Calculates how many applications were submitted across each of the previous 8 weeks for charting in the UI.
+2. **Follow-Up Reminders Endpoint (`GET /api/applications/follow-ups/`)**:
+   - Queries `follow_up_date__lte=today` while excluding completed statuses (`offer`, `rejected`).
+   - Sorted in ascending order of `follow_up_date` so the most overdue reminders are addressed first.
+3. **Automated Unit Tests**:
+   - Created test cases in `backend/applications/tests.py` testing math accuracy, zero-division safety, and date-range threshold checks.
+
+---
+
+### 2. How the Aggregation Query Connects
+
+```
+Client Dashboard (Stats Page)
+          │
+          │── GET /api/applications/stats/ ─────────────>
+          │   Header: Authorization: Bearer <token>
+          │                                            Django Backend (ORM)
+          │                                            Executes SQL:
+          │                                            SELECT status, COUNT(id)
+          │                                            FROM applications_application
+          │                                            WHERE user_id = 1
+          │                                            GROUP BY status;
+          │<─ HTTP 200 OK ─────────────────────────────
+          │   { total_applications: 14,
+          │     response_rate_percent: 33.3,
+          │     status_counts: { applied: 6, interview: 2, ... },
+          │     weekly_trend: [...] }
+          ▼
+Renders Recharts Analytics Visualizations
+```
+
+---
+
+### 3. Likely Interview Questions & Short Answers
+
+#### Q1: Why do we perform aggregation in the database rather than fetching all rows into Python memory?
+> **Answer:** Scalability and performance. If a user has 10,000 applications, sending 10,000 rows across the network and iterating over them in Python wastes network bandwidth, memory, and CPU. Database engines like MySQL are heavily optimized in C++ to compute `COUNT()` and `GROUP BY` directly on disk/buffer indexes in milliseconds, returning only a tiny summary payload.
+
+#### Q2: How does Django ORM translate `values('status').annotate(count=Count('id'))` into SQL?
+> **Answer:** In Django, chaining `.values('status')` before an annotation triggers a SQL `GROUP BY status`. The `.annotate(count=Count('id'))` translates to `SELECT status, COUNT(id) AS count ... GROUP BY status`.
+
+#### Q3: How did you handle edge cases like division by zero when calculating the response rate?
+> **Answer:** If a user has only added applications to their "Wishlist" or hasn't submitted any applications yet, `applied_total` would be `0`. A naive calculation `positive / applied_total` would crash with `ZeroDivisionError`. We safeguard this in Python with a ternary condition: `(positive / applied) * 100 if applied > 0 else 0.0`.
+
+#### Q4: What is the purpose of Django's `Q` objects in the weekly velocity calculation?
+> **Answer:** By default, `.filter(a=x, b=y)` in Django combines conditions with logical `AND`. `Q` objects allow complex boolean logic including logical `OR` (`|`) and negation (`~`). In our weekly stats, we used `Q(applied_date__gte=start, applied_date__lte=end) | Q(applied_date__isnull=True, created_at__date__gte=start, created_at__date__lte=end)` to gracefully fallback to `created_at` if the user didn't explicitly specify an `applied_date`.
