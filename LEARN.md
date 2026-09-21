@@ -152,3 +152,83 @@ Client (React / Postman)                     Django Backend
 > **Answer:**
 > - **401 Unauthorized:** The client is unauthenticated — no credentials were provided or the token is invalid/expired ("Who are you? Please log in").
 > - **403 Forbidden:** The client is authenticated, but does not have permission to perform that action or view that resource ("I know who you are, but you cannot touch this").
+
+---
+
+## Phase 3: Applications Core API (CRUD & Multi-Tenant Data Isolation)
+
+### 1. What We Built and Why
+
+In Phase 3, we built the core data engine of the Job Application Tracker: the `Application` model, serializers, filters, and a `ModelViewSet` with complete CRUD capabilities.
+
+Key components established:
+1. **Relational Model (`backend/applications/models.py`)**:
+   - `user`: Foreign key to `auth.User` with `on_delete=models.CASCADE`. If an account is deleted, all their applications are automatically and cleanly removed from the database.
+   - `status`: Utilizes Django's `models.TextChoices` (`WISHLIST`, `APPLIED`, `INTERVIEW`, `OFFER`, `REJECTED`), providing readable database values while giving Python type safety and automatic choice validation.
+   - `indexes`: Created composite database indexes (`user + status`, `user + follow_up_date`, `user + created_at`) on MySQL, optimizing lookups so queries remain lightning-fast even with tens of thousands of records.
+2. **Strict Multi-Tenant User Isolation (`ApplicationViewSet.get_queryset()`)**:
+   - Security rule: A user should **never** be able to see or manipulate another user's applications.
+   - Instead of checking user permissions manually in every view method, we override `get_queryset()` to return `Application.objects.filter(user=self.request.user)`.
+   - If User A attempts to access, edit, or delete User B's application (`/api/applications/{id}/`), Django queries User A's scoped queryset, finds nothing, and automatically responds with `HTTP 404 Not Found`. This prevents information leakage (an attacker cannot even tell whether an application ID exists for someone else).
+3. **Automatic Owner Binding (`perform_create`)**:
+   - The frontend does not pass a `user` field when creating an application. In `perform_create()`, Django automatically binds the authenticated user (`serializer.save(user=self.request.user)`). This prevents spoofing.
+4. **Filtering, Searching & Pagination**:
+   - **Search (`SearchFilter`):** Full-text case-insensitive search across `company`, `role`, `location`, and `notes`.
+   - **Filter (`DjangoFilterBackend` + `ApplicationFilter`):** Exact and case-insensitive filtering by `status`, `company`, `role`, `location`, and date ranges (`applied_after`, `applied_before`).
+   - **Ordering (`OrderingFilter`):** Sorting by `applied_date`, `created_at`, `company`, or `status`.
+   - **Pagination:** Paginates results by 10 items per page with `count`, `next`, and `previous` links.
+
+---
+
+### 2. How the Query Isolation and CRUD Flow Connect
+
+```
+HTTP Request: PATCH /api/applications/42/ { "status": "interview" }
+Headers: Authorization: Bearer <access_token>
+                      │
+                      ▼
+         JWTAuthentication Middleware
+  (Validates token signature -> binds user to request.user)
+                      │
+                      ▼
+         ApplicationViewSet.get_queryset()
+  Executes: SELECT * FROM applications_application
+            WHERE id = 42 AND user_id = request.user.id;
+                      │
+        ┌─────────────┴─────────────┐
+        ▼                           ▼
+Record found?                 Record not found (or belongs to other user)?
+  │                                         │
+  ▼                                         ▼
+ApplicationSerializer.is_valid()    Return HTTP 404 Not Found
+  │                                 (Zero data leakage)
+  ▼
+Updates DB & returns HTTP 200
+```
+
+---
+
+### 3. Likely Interview Questions & Short Answers
+
+#### Q1: How do you enforce multi-tenant data isolation in Django REST Framework?
+> **Answer:** By overriding `get_queryset()` in the ViewSet to filter records by `self.request.user`:
+> ```python
+> def get_queryset(self):
+>     return Application.objects.filter(user=self.request.user)
+> ```
+> This ensures that all list, retrieve, update, and delete actions automatically operate only within the logged-in user's private dataset. If someone attempts to access another user's ID, DRF raises an `Http404` error.
+
+#### Q2: Why is returning 404 better than 403 when a user tries to access another user's record?
+> **Answer:** Returning `403 Forbidden` confirms to an attacker that the resource ID actually exists in the database. Returning `404 Not Found` completely hides the existence of the resource, preventing ID enumeration attacks and data harvesting.
+
+#### Q3: What is the difference between `PUT` and `PATCH` in RESTful APIs, and how does that apply to our Kanban board?
+> **Answer:**
+> - `PUT`: Replaces the entire resource. All required fields must be supplied in the request body.
+> - `PATCH`: Partially updates specific fields without modifying the others.
+> When dragging a card across columns on a Kanban board, we only need to change `status`. A `PATCH` request with `{ "status": "interview" }` is ideal because it avoids resending the entire application payload over the network.
+
+#### Q4: Why use `models.TextChoices` in Django instead of raw string tuples?
+> **Answer:** `models.TextChoices` provides a clean, enum-like class in Python. It centralizes all valid choices, prevents typo bugs (e.g. using `ApplicationStatus.INTERVIEW` instead of hardcoding `'interview'`), and generates human-friendly labels accessible via `get_status_display()`.
+
+#### Q5: What are database indexes and why did we add composite indexes on `(user, status)`?
+> **Answer:** An index is a data structure (typically a B-Tree) that allows the database engine to locate records without scanning every row in a table. Because our application constantly queries `WHERE user_id = ? AND status = ?` to populate the Kanban board columns, a composite index on `(user, status)` lets MySQL jump directly to the user's stage-specific applications in $O(\log n)$ time.
