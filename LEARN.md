@@ -290,3 +290,95 @@ Renders Recharts Analytics Visualizations
 
 #### Q4: What is the purpose of Django's `Q` objects in the weekly velocity calculation?
 > **Answer:** By default, `.filter(a=x, b=y)` in Django combines conditions with logical `AND`. `Q` objects allow complex boolean logic including logical `OR` (`|`) and negation (`~`). In our weekly stats, we used `Q(applied_date__gte=start, applied_date__lte=end) | Q(applied_date__isnull=True, created_at__date__gte=start, created_at__date__lte=end)` to gracefully fallback to `created_at` if the user didn't explicitly specify an `applied_date`.
+
+---
+
+## Phase 5: Frontend Architecture & Token Refresh Flow
+
+### 1. What We Built and Why
+- **Vite + React 18:** Ultra-fast bundling, ES modules, and rapid hot-module reloading.
+- **Tailwind CSS:** Modern utility-first CSS framework allowing rapid, clean UI development without context switching or bloated CSS files.
+- **React Router v6:** Declarative client-side routing with `ProtectedRoute` and `PublicRoute` wrappers.
+- **Axios Interceptors:**
+  - Automatically attaches `Authorization: Bearer <token>` to all API requests.
+  - Intercepts `401 Unauthorized` responses, transparently sends `/api/auth/refresh/`, updates the access token in memory/storage, and retries the original request seamlessly.
+  - Request queueing prevents multiple simultaneous refresh calls when several parallel API calls trigger a 401.
+
+### 2. Interview Questions & Answers
+#### Q1: How does an Axios interceptor refresh expired JWT tokens without disrupting the user?
+> **Answer:** An Axios response interceptor intercepts any 401 error. If `_retry` is not set, it marks the request, pauses other requests in a queue, and posts the long-lived refresh token to `/api/auth/refresh/`. Upon receiving a fresh access token, it updates `localStorage`, rewrites the request's `Authorization` header, resolves the queued promises, and retries the failed request. To the user, the app works without ever logging out.
+
+#### Q2: What is the difference between client-side routing (React Router) and traditional server-side routing?
+> **Answer:** In traditional server-side routing, clicking a link requests a full HTML document from the server, causing a page refresh. In client-side routing (SPA), the browser downloads one initial bundle. React Router listens to URL changes via the HTML5 History API and swaps the active view components in DOM memory instantaneously without contacting the server.
+
+---
+
+## Phase 6: Kanban Drag-and-Drop & Table Views
+
+### 1. What We Built and Why
+- **`@dnd-kit/core` Drag-and-Drop:** Modern, accessible, mobile-touch friendly drag-and-drop library.
+- **Optimistic UI Updates:** When a card is dragged from "Applied" to "Interview", the state updates in React immediately so the user feels zero lag. The `PATCH /api/applications/{id}/` request is sent in the background. If the network call fails, React reverts to the previous snapshot and displays an alert.
+- **Table List View with Stacked Mobile Cards:** A responsive table for desktops that collapses into clean vertical cards on mobile devices.
+
+### 2. Interview Questions & Answers
+#### Q1: What is an "Optimistic UI Update" and why is it used in Kanban boards?
+> **Answer:** An optimistic update modifies the user interface before receiving confirmation from the server, assuming the network request will succeed. For drag-and-drop interactions, waiting for a 200ms round-trip makes the UI feel sluggish. If the server request fails, the application rolls back the change and displays an error notification.
+
+---
+
+## Phase 7: Analytics Visualization & Reminders
+
+### 1. What We Built and Why
+- **Recharts Data Visualization:** Composable SVG charts rendered natively within React's component tree.
+- **KPI Summary Cards:** Quick bird's-eye metrics (Total, Active, Response Rate %, Offers).
+- **Follow-up Reminders:** Filters applications where `follow_up_date <= today` and status is active, helping candidates never miss a thank-you note or check-in.
+
+### 2. Interview Questions & Answers
+#### Q1: How do you format backend datetime data for Recharts?
+> **Answer:** Recharts expects an array of clean JavaScript objects (e.g. `[{ week: "Wk Sep 15", count: 4 }]`). We structure our Django endpoint to return clean serialized primitives so the React frontend can bind keys directly to `<XAxis dataKey="week" />` and `<Bar dataKey="count" />`.
+
+---
+
+## Phase 8: Mobile Polish & Edge-Case Handling
+
+### 1. What We Built and Why
+- Horizontal touch scrolling on Kanban boards (`overflow-x-auto`) with minimum column widths.
+- PointerSensor activation constraints (`distance: 5px`) so tapping cards doesn't accidentally trigger drag mode.
+- Empty states with call-to-action buttons ("No applications yet - Add your first one").
+
+---
+
+## Phase 9: Cloud Deployment & DevOps
+
+### 1. What We Built and Why
+- **WhiteNoise:** Serves static files directly from Gunicorn with gzip/brotli compression and cache-busting hashes, eliminating the need for complex web server configurations.
+- **Gunicorn:** A battle-tested WSGI HTTP server for UNIX/Linux hosting (Render, Railway).
+- **SPA Rewrite Rules (`vercel.json` / `_redirects`):** Rewrites all incoming paths (`/*`) to `/index.html` so client-side routing works on page refreshes.
+
+### 2. Interview Questions & Answers
+#### Q1: Why do single-page applications (SPAs) return 404 when refreshed on cloud hosts unless rewrite rules are added?
+> **Answer:** In an SPA, routes like `/applications` or `/stats` do not exist as physical HTML files on the server's disk. When a user refreshes the page, the cloud host looks for `/applications/index.html` and returns 404. Adding a rewrite rule (`/* -> /index.html`) instructs the web server to always serve the root `index.html`, allowing React Router to inspect the URL in the browser and render the correct view.
+
+---
+
+## Phase 10: Technical Interview Mastery - High-Yield Question Bank
+
+### Section A: Python & Django Architecture
+1. **Explain Django's MVT (Model-View-Template) pattern.**
+   - *Answer:* Model represents database tables and logic; View (or ViewSet in DRF) handles HTTP requests, business logic, and queries; Template (or Serializer in DRF) formats data for display (HTML or JSON).
+2. **What is Django ORM and what are its advantages?**
+   - *Answer:* Object-Relational Mapping allows developers to interact with relational databases using Python classes instead of writing raw SQL. It protects against SQL injection, provides database engine agnosticism, and tracks schema changes via migrations.
+3. **What is the N+1 query problem and how do you prevent it in Django?**
+   - *Answer:* The N+1 problem occurs when querying a table of N records causes N additional queries to fetch foreign key relationships. In Django, we prevent this using `select_related()` (for `ForeignKey` and `OneToOne` via SQL `JOIN`) or `prefetch_related()` (for `ManyToMany` and reverse foreign keys).
+
+### Section B: REST APIs & Authentication
+4. **What are the principles of RESTful APIs?**
+   - *Answer:* Statelessness, client-server decoupling, uniform interface (HTTP methods like GET, POST, PUT, PATCH, DELETE), resource-based URIs, and standard HTTP status codes.
+5. **How does Password Hashing work in Django?**
+   - *Answer:* Django never stores passwords in plain text. It uses the PBKDF2 algorithm with a SHA-256 hash and a unique cryptographic salt per user. Even if the database is leaked, rainbow table attacks are ineffective.
+
+### Section C: React & Frontend Performance
+6. **What is the Virtual DOM and how does React use it?**
+   - *Answer:* The Virtual DOM is a lightweight JavaScript representation of the real DOM. When state changes, React creates a new virtual DOM tree, diffs it against the previous one (reconciliation), and updates only the modified real DOM nodes.
+7. **What is the purpose of React's `useEffect` cleanup function?**
+   - *Answer:* It cancels active subscriptions, clears intervals/timers, or aborts pending fetch requests when a component unmounts or before re-running the effect, preventing memory leaks.
